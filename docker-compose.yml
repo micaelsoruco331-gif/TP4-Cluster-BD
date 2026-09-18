@@ -1,0 +1,171 @@
+version: "3.8"
+
+networks:
+  cluster-net:
+    driver: bridge
+
+volumes:
+  data-node1:
+  data-node2:
+  data-node3:
+  pgadmin-data:
+  prometheus-data:
+  grafana-data:
+
+services:
+
+  db-node1:
+    image: bitnami/postgresql:latest
+    container_name: db-node1
+    restart: always
+    environment:
+      - POSTGRESQL_REPLICATION_MODE=master
+      - POSTGRESQL_REPLICATION_USER=replicacion
+      - POSTGRESQL_REPLICATION_PASSWORD=Cluster2026_Repl!
+      - POSTGRESQL_USERNAME=aplicacion
+      - POSTGRESQL_PASSWORD=Cluster2026_App!
+      - POSTGRESQL_DATABASE=clusterdb
+      - POSTGRESQL_POSTGRES_PASSWORD=Cluster2026_AdminPass!
+    volumes:
+      - data-node1:/bitnami/postgresql
+    networks:
+      - cluster-net
+
+  db-node2:
+    image: bitnami/postgresql:latest
+    container_name: db-node2
+    restart: always
+    environment:
+      - POSTGRESQL_REPLICATION_MODE=slave
+      - POSTGRESQL_REPLICATION_USER=replicacion
+      - POSTGRESQL_REPLICATION_PASSWORD=Cluster2026_Repl!
+      - POSTGRESQL_MASTER_HOST=db-node1
+      - POSTGRESQL_MASTER_PORT_NUMBER=5432
+      - POSTGRESQL_PASSWORD=Cluster2026_App!
+    volumes:
+      - data-node2:/bitnami/postgresql
+    networks:
+      - cluster-net
+    depends_on:
+      - db-node1
+
+  db-node3:
+    image: bitnami/postgresql:latest
+    container_name: db-node3
+    restart: always
+    environment:
+      - POSTGRESQL_REPLICATION_MODE=slave
+      - POSTGRESQL_REPLICATION_USER=replicacion
+      - POSTGRESQL_REPLICATION_PASSWORD=Cluster2026_Repl!
+      - POSTGRESQL_MASTER_HOST=db-node1
+      - POSTGRESQL_MASTER_PORT_NUMBER=5432
+      - POSTGRESQL_PASSWORD=Cluster2026_App!
+    volumes:
+      - data-node3:/bitnami/postgresql
+    networks:
+      - cluster-net
+    depends_on:
+      - db-node1
+
+  haproxy:
+    image: haproxy:2.9
+    container_name: haproxy
+    restart: always
+    volumes:
+      - ./config/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "5432:5432"
+      - "5433:5433"
+      - "7000:7000"
+    networks:
+      - cluster-net
+    depends_on:
+      - db-node1
+      - db-node2
+      - db-node3
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin
+    restart: always
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@clusterdb.com
+      - PGADMIN_DEFAULT_PASSWORD=Cluster2026_Admin!
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+    ports:
+      - "8080:80"
+    networks:
+      - cluster-net
+    depends_on:
+      - db-node1
+      - db-node2
+      - db-node3
+
+  postgres-exporter-node1:
+    image: prometheuscommunity/postgres-exporter
+    container_name: postgres-exporter-node1
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://postgres:Cluster2026_AdminPass!@db-node1:5432/clusterdb?sslmode=disable"
+    networks:
+      - cluster-net
+    depends_on:
+      - db-node1
+
+  postgres-exporter-node2:
+    image: prometheuscommunity/postgres-exporter
+    container_name: postgres-exporter-node2
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://postgres:Cluster2026_AdminPass!@db-node2:5432/clusterdb?sslmode=disable"
+    networks:
+      - cluster-net
+    depends_on:
+      - db-node2
+
+  postgres-exporter-node3:
+    image: prometheuscommunity/postgres-exporter
+    container_name: postgres-exporter-node3
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://postgres:Cluster2026_AdminPass!@db-node3:5432/clusterdb?sslmode=disable"
+    networks:
+      - cluster-net
+    depends_on:
+      - db-node3
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus_tsdb
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    ports:
+      - "9090:9090"
+    networks:
+      - cluster-net
+    depends_on:
+      - postgres-exporter-node1
+      - postgres-exporter-node2
+      - postgres-exporter-node3
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana_dashboard
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=Cluster2026_Grafana!
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - cluster-net
+    depends_on:
+      - prometheus
